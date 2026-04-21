@@ -1,0 +1,23 @@
+[Unit]
+Description=Hestia AI Bridge — ai.sock adapter to agentic_flow orchestrator
+Documentation=https://github.com/Code4me2/hestia-shell
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/Desktop/hestia-ai-bridge/.venv/bin/python -m hestia_ai_bridge
+Restart=on-failure
+RestartSec=3
+# Orchestrator, socket path, and token override via drop-in or environment file:
+#   systemctl --user edit hestia-ai-bridge
+# Defaults:
+#   ORCHESTRATOR_URL=http://localhost:8000
+#   AI_SOCKET_PATH=/run/user/%U/hestia-shell/ai.sock
+#   BRIDGE_HTTP_HOST=127.0.0.1
+#   BRIDGE_HTTP_PORT=8765
+#   EMERSON_SOCKET=/tmp/emerson.sock
+Environment=LOG_LEVEL=INFO
+
+[Install]
+WantedBy=graphical-session.target

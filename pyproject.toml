@@ -1,0 +1,19 @@
+[project]
+name = "hestia-ai-bridge"
+version = "0.1.0"
+description = "Local bridge daemon between the hestia shell's ai.sock and the agentic_flow orchestrator"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "aiohttp>=3.9",
+]
+
+[project.scripts]
+hestia-ai-bridge = "hestia_ai_bridge.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["hestia_ai_bridge*"]
