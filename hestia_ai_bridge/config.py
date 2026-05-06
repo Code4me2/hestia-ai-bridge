@@ -26,6 +26,7 @@ class Config:
     orchestrator_health_interval: float
     orchestrator_retry_initial: float
     orchestrator_retry_max: float
+    orchestrator_failure_threshold: int
     emerson_poll_timeout: float
     log_level: str
 
@@ -58,6 +59,7 @@ def load() -> Config:
         orchestrator_health_interval=float(os.environ.get("ORCH_HEALTH_INTERVAL", "30")),
         orchestrator_retry_initial=float(os.environ.get("ORCH_RETRY_INITIAL", "5")),
         orchestrator_retry_max=float(os.environ.get("ORCH_RETRY_MAX", "300")),
+        orchestrator_failure_threshold=max(1, int(os.environ.get("ORCH_FAILURE_THRESHOLD", "3"))),
         emerson_poll_timeout=float(os.environ.get("EMERSON_POLL_TIMEOUT", "2.0")),
         log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     )

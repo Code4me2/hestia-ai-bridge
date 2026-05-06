@@ -37,12 +37,18 @@ class OrchestratorClient:
         self._connect_timeout = connect_timeout
 
     async def health_probe(self, timeout: float = 3.0) -> bool:
+        ok, _error = await self.health_probe_detail(timeout=timeout)
+        return ok
+
+    async def health_probe_detail(self, timeout: float = 3.0) -> tuple[bool, str | None]:
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.get(f"{self._base}/health")
-                return r.status_code == 200
-        except (httpx.HTTPError, asyncio.TimeoutError):
-            return False
+                if r.status_code == 200:
+                    return True, None
+                return False, f"HTTP {r.status_code}: {r.text[:200]}"
+        except (httpx.HTTPError, asyncio.TimeoutError) as e:
+            return False, f"{type(e).__name__}: {e}"
 
     async def chat_stream(
         self,

@@ -5,7 +5,7 @@ Wires together:
   - Emerson client (length-prefixed JSON on /tmp/emerson.sock)
   - UDS server (shell-facing ai.sock)
   - HTTP server (GET /desktop_state, /health — consumed by LSA + monitoring)
-  - Health probe loop (sets/clears the `online` Event with exponential backoff)
+  - Health probe loop (records health metadata with transient-failure hysteresis)
   - Session persistence
   - Signal handling (SIGINT/SIGTERM -> graceful shutdown)
 """
@@ -21,6 +21,7 @@ from .assistant_events import PhoneCallGuard
 from .call_state import PhoneCallMonitor
 from .config import Config, load
 from .emerson_client import EmersonClient
+from .health import HealthState
 from .http_server import HTTPServer
 from .orchestrator_client import OrchestratorClient
 from .session import load_or_create
@@ -32,28 +33,60 @@ logger = logging.getLogger(__name__)
 async def _health_loop(
     orchestrator: OrchestratorClient,
     online: asyncio.Event,
+    health_state: HealthState,
     cfg: Config,
 ) -> None:
     """Continuously probe orchestrator /health.
 
-    On success: set `online`, reset backoff, sleep cfg.orchestrator_health_interval.
-    On failure: clear `online`, sleep `retry`, double retry up to orchestrator_retry_max.
+    On success: set online immediately, reset backoff, sleep cfg.orchestrator_health_interval.
+    On failure: keep online through transient failures until the configured
+    consecutive-failure threshold, then sleep with exponential backoff.
     """
     retry = cfg.orchestrator_retry_initial
     while True:
-        ok = await orchestrator.health_probe()
+        ok = await _record_health_probe(orchestrator, online, health_state, retry, cfg)
         if ok:
-            if not online.is_set():
-                logger.info("Orchestrator online")
-                online.set()
             retry = cfg.orchestrator_retry_initial
             await asyncio.sleep(cfg.orchestrator_health_interval)
         else:
-            if online.is_set():
-                logger.warning("Orchestrator offline — entering backoff")
-                online.clear()
             await asyncio.sleep(retry)
             retry = min(retry * 2, cfg.orchestrator_retry_max)
+
+
+async def _record_health_probe(
+    orchestrator: OrchestratorClient,
+    online: asyncio.Event,
+    health_state: HealthState,
+    failure_delay: float,
+    cfg: Config,
+) -> bool:
+    ok, error = await orchestrator.health_probe_detail()
+    if ok:
+        was_online = online.is_set()
+        health_state.record_success(next_probe_delay=cfg.orchestrator_health_interval)
+        online.set()
+        if not was_online:
+            logger.info("Orchestrator online")
+        return True
+
+    detail = error or "health probe returned false"
+    was_online = online.is_set()
+    health_state.record_failure(detail, next_probe_delay=failure_delay)
+    if health_state.orchestrator_online:
+        online.set()
+        logger.warning(
+            "Orchestrator health probe failed (%d/%d): %s",
+            health_state.consecutive_failures,
+            health_state.failure_threshold,
+            detail,
+        )
+    else:
+        online.clear()
+        if was_online:
+            logger.warning("Orchestrator offline after health probe failures: %s", detail)
+        else:
+            logger.warning("Orchestrator health probe failed: %s", detail)
+    return False
 
 
 async def _run(cfg: Config) -> None:
@@ -63,6 +96,10 @@ async def _run(cfg: Config) -> None:
     orchestrator = OrchestratorClient(cfg.orchestrator_url)
     emerson = EmersonClient(cfg.emerson_socket, timeout=cfg.emerson_poll_timeout)
     online = asyncio.Event()
+    health_state = HealthState(
+        orchestrator_url=cfg.orchestrator_url,
+        failure_threshold=cfg.orchestrator_failure_threshold,
+    )
     call_guard = PhoneCallGuard()
     call_monitor = PhoneCallMonitor(call_guard)
 
@@ -82,6 +119,15 @@ async def _run(cfg: Config) -> None:
         emerson=emerson,
         bridge_token=cfg.bridge_token,
         online=online,
+        health_state=health_state,
+    )
+
+    await _record_health_probe(
+        orchestrator,
+        online,
+        health_state,
+        cfg.orchestrator_retry_initial,
+        cfg,
     )
 
     await uds.start()
@@ -89,7 +135,7 @@ async def _run(cfg: Config) -> None:
     await http.start()
     call_monitor.start()
 
-    health_task = asyncio.create_task(_health_loop(orchestrator, online, cfg), name="health-loop")
+    health_task = asyncio.create_task(_health_loop(orchestrator, online, health_state, cfg), name="health-loop")
     serve_task = asyncio.create_task(uds.serve_forever(), name="uds-serve")
     assistant_task = asyncio.create_task(assistant_events.serve_forever(), name="assistant-events-serve")
 

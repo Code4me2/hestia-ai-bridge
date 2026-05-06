@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from aiohttp import web
 
 from .emerson_client import EmersonClient, EmersonError
+from .health import HealthState
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +43,14 @@ class HTTPServer:
         emerson: EmersonClient,
         bridge_token: str | None,
         online: asyncio.Event,
+        health_state: HealthState | None = None,
     ):
         self._host = host
         self._port = port
         self._emerson = emerson
         self._token = bridge_token
         self._online = online
+        self._health_state = health_state
         self._app = web.Application(middlewares=[self._auth_middleware])
         self._app.router.add_get("/health", self._health)
         self._app.router.add_get("/desktop_state", self._desktop_state)
@@ -84,10 +87,16 @@ class HTTPServer:
     # Handlers
 
     async def _health(self, request: web.Request) -> web.Response:
+        orchestrator = (
+            self._health_state.to_dict()
+            if self._health_state is not None
+            else {"orchestrator_online": self._online.is_set()}
+        )
         return web.json_response(
             {
                 "status": "ok",
                 "orchestrator_online": self._online.is_set(),
+                "orchestrator": orchestrator,
                 "ts": _now_iso(),
             }
         )
