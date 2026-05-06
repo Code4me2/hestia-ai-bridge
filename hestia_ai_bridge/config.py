@@ -17,6 +17,7 @@ def _xdg_state_home() -> Path:
 class Config:
     orchestrator_url: str
     ai_socket_path: Path
+    assistant_socket_path: Path
     http_host: str
     http_port: int
     emerson_socket: Path
@@ -39,6 +40,12 @@ def load() -> Config:
             os.environ.get(
                 "AI_SOCKET_PATH",
                 f"/run/user/{_uid()}/hestia-shell/ai.sock",
+            )
+        ),
+        assistant_socket_path=Path(
+            os.environ.get(
+                "ASSISTANT_SOCKET_PATH",
+                f"/run/user/{_uid()}/hestia-shell/assistant.sock",
             )
         ),
         http_host=os.environ.get("BRIDGE_HTTP_HOST", "127.0.0.1"),
