@@ -122,14 +122,6 @@ async def _run(cfg: Config) -> None:
         health_state=health_state,
     )
 
-    await _record_health_probe(
-        orchestrator,
-        online,
-        health_state,
-        cfg.orchestrator_retry_initial,
-        cfg,
-    )
-
     await uds.start()
     await assistant_events.start()
     await http.start()

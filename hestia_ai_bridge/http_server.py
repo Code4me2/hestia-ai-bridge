@@ -88,7 +88,7 @@ class HTTPServer:
 
     async def _health(self, request: web.Request) -> web.Response:
         orchestrator = (
-            self._health_state.to_dict()
+            self._health_state.to_dict(include_private=False)
             if self._health_state is not None
             else {"orchestrator_online": self._online.is_set()}
         )

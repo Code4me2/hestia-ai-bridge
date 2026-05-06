@@ -5,7 +5,8 @@ from pathlib import Path
 from hestia_ai_bridge.config import Config
 from hestia_ai_bridge.health import HealthState
 from hestia_ai_bridge.http_server import HTTPServer
-from hestia_ai_bridge.main import _record_health_probe
+import hestia_ai_bridge.main as bridge_main
+from hestia_ai_bridge.main import _record_health_probe, _run
 
 
 class FakeOrchestrator:
@@ -129,8 +130,124 @@ def test_http_health_preserves_compatibility_fields_and_adds_metadata():
     assert payload["status"] == "ok"
     assert payload["orchestrator_online"] is True
     assert payload["ts"]
-    assert payload["orchestrator"] == state.to_dict()
+    assert payload["orchestrator"] == state.to_dict(include_private=False)
     assert payload["orchestrator"]["status"] == "online"
-    assert payload["orchestrator"]["orchestrator_url"] == "http://orchestrator.test"
+    assert "orchestrator_url" not in payload["orchestrator"]
+    assert "last_error" not in payload["orchestrator"]
     assert "last_probe_at" in payload["orchestrator"]
     assert "consecutive_failures" in payload["orchestrator"]
+
+
+def test_http_health_does_not_expose_raw_orchestrator_url_or_error():
+    online = asyncio.Event()
+    state = HealthState("http://secret-orchestrator.internal", failure_threshold=3)
+    state.record_failure(
+        "HTTP 500: upstream body includes sensitive details",
+        next_probe_delay=5.0,
+    )
+    server = HTTPServer(
+        host="127.0.0.1",
+        port=0,
+        emerson=object(),
+        bridge_token=None,
+        online=online,
+        health_state=state,
+    )
+
+    response = asyncio.run(server._health(None))
+    body = response.text
+    payload = json.loads(body)
+
+    assert payload["status"] == "ok"
+    assert payload["orchestrator_online"] is False
+    assert payload["orchestrator"]["status"] == "offline"
+    assert payload["orchestrator"]["consecutive_failures"] == 1
+    assert payload["orchestrator"]["failure_threshold"] == 3
+    assert "secret-orchestrator" not in body
+    assert "sensitive details" not in body
+    assert "orchestrator_url" not in payload["orchestrator"]
+    assert "last_error" not in payload["orchestrator"]
+
+
+def test_run_starts_local_services_before_health_loop_probe(monkeypatch, tmp_path):
+    cfg = _cfg()
+    cfg = Config(
+        **{
+            **cfg.__dict__,
+            "ai_socket_path": tmp_path / "ai.sock",
+            "assistant_socket_path": tmp_path / "assistant.sock",
+            "session_state_path": tmp_path / "session.json",
+        }
+    )
+    starts = []
+
+    class FakeOrchestrator:
+        def __init__(self, url):
+            self.url = url
+
+        async def health_probe_detail(self):
+            assert starts == ["uds", "assistant", "http", "call_monitor"]
+            return True, None
+
+    class FakeUDS:
+        def __init__(self, **kwargs):
+            pass
+
+        async def start(self):
+            starts.append("uds")
+
+        async def serve_forever(self):
+            await asyncio.Event().wait()
+
+        async def stop(self):
+            starts.append("uds_stop")
+
+    class FakeAssistantEvents:
+        def __init__(self, **kwargs):
+            pass
+
+        async def start(self):
+            starts.append("assistant")
+
+        async def serve_forever(self):
+            await asyncio.Event().wait()
+
+        async def stop(self):
+            starts.append("assistant_stop")
+
+    class FakeHTTP:
+        def __init__(self, **kwargs):
+            pass
+
+        async def start(self):
+            starts.append("http")
+
+        async def stop(self):
+            starts.append("http_stop")
+
+    class FakeCallMonitor:
+        def __init__(self, guard):
+            pass
+
+        def start(self):
+            starts.append("call_monitor")
+
+        async def stop(self):
+            starts.append("call_monitor_stop")
+
+    async def fake_health_loop(orchestrator, online, health_state, cfg):
+        ok, _ = await orchestrator.health_probe_detail()
+        assert ok is True
+
+    monkeypatch.setattr(bridge_main, "load_or_create", lambda path: "session-test")
+    monkeypatch.setattr(bridge_main, "OrchestratorClient", FakeOrchestrator)
+    monkeypatch.setattr(bridge_main, "EmersonClient", lambda *args, **kwargs: object())
+    monkeypatch.setattr(bridge_main, "UDSServer", FakeUDS)
+    monkeypatch.setattr(bridge_main, "AssistantEventServer", FakeAssistantEvents)
+    monkeypatch.setattr(bridge_main, "HTTPServer", FakeHTTP)
+    monkeypatch.setattr(bridge_main, "PhoneCallMonitor", FakeCallMonitor)
+    monkeypatch.setattr(bridge_main, "_health_loop", fake_health_loop)
+
+    asyncio.run(_run(cfg))
+
+    assert starts[:4] == ["uds", "assistant", "http", "call_monitor"]

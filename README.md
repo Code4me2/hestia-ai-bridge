@@ -61,6 +61,7 @@ All via environment variables. Override in a systemd drop-in
 | `ORCH_HEALTH_INTERVAL`   | `30`                                   | Seconds between health probes (online)|
 | `ORCH_RETRY_INITIAL`     | `5`                                    | Offline backoff start (seconds)       |
 | `ORCH_RETRY_MAX`         | `300`                                  | Offline backoff cap (seconds)         |
+| `ORCH_FAILURE_THRESHOLD` | `3`                                    | Consecutive failed probes before marking orchestrator offline |
 | `EMERSON_POLL_TIMEOUT`   | `2.0`                                  | Per-IPC timeout to emerson            |
 | `LOG_LEVEL`              | `INFO`                                 | DEBUG / INFO / WARNING / ERROR        |
 
@@ -68,11 +69,19 @@ All via environment variables. Override in a systemd drop-in
 
 ### `GET /health`
 
-Always open. Returns orchestrator online/offline and bridge timestamp.
+Always open. Returns bridge status, orchestrator online/offline, timestamp,
+and sanitized orchestrator health metadata. It intentionally omits the
+orchestrator URL and raw upstream error details because `/health` bypasses
+`BRIDGE_TOKEN` for monitoring compatibility.
 
 ```json
 { "status": "ok", "orchestrator_online": true, "ts": "2026-04-20T..." }
 ```
+
+The nested `orchestrator.status` is `unknown` until the first async probe
+completes after bridge startup, `online` after a successful probe, `degraded`
+while transient failures are below `ORCH_FAILURE_THRESHOLD`, and `offline`
+after the threshold is reached.
 
 ### `GET /desktop_state`
 

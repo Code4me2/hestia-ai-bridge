@@ -59,16 +59,25 @@ class HealthState:
         if self.last_success_at is None or self.consecutive_failures >= self.failure_threshold:
             self.orchestrator_online = False
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, *, include_private: bool = True) -> dict:
+        """Return health metadata.
+
+        By default this preserves the internal/full diagnostic shape used by
+        tests and future protected/debug callers. Public unauthenticated health
+        responses should pass ``include_private=False`` so upstream URLs and raw
+        error strings (which may contain response bodies) are not exposed.
+        """
+        data = {
             "status": self.status,
             "orchestrator_online": self.orchestrator_online,
-            "orchestrator_url": self.orchestrator_url,
             "last_probe_at": self.last_probe_at,
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
-            "last_error": self.last_error,
             "consecutive_failures": self.consecutive_failures,
             "next_probe_delay": self.next_probe_delay,
             "failure_threshold": self.failure_threshold,
         }
+        if include_private:
+            data["orchestrator_url"] = self.orchestrator_url
+            data["last_error"] = self.last_error
+        return data
