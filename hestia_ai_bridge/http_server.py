@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from aiohttp import web
 
@@ -32,6 +34,34 @@ logger = logging.getLogger(__name__)
 
 
 _CLIP_PREVIEW_CHARS = 500
+_ASSISTANT_STATES = [
+    "idle",
+    "listening",
+    "thinking",
+    "speaking",
+    "interrupted",
+    "call_active",
+    "offline",
+    "error",
+]
+_VISUAL_VERBS = [
+    "show_card",
+    "update_card",
+    "dismiss_card",
+    "show_confirmation",
+    "show_tool_status",
+    "open_chat",
+    "close_chat",
+    "open_app_interface",
+    "close_app_interface",
+]
+_PROTECTED_MODES = ["phone_call_active", "offline", "error"]
+_FORBIDDEN = [
+    "arbitrary_ui_mutation",
+    "expose_unix_sockets_over_tailscale",
+    "bypass_phone_call_protected_mode",
+    "launch_unapproved_os_actions",
+]
 
 
 class HTTPServer:
@@ -44,6 +74,8 @@ class HTTPServer:
         bridge_token: str | None,
         online: asyncio.Event,
         health_state: HealthState | None = None,
+        ai_socket_path: Path | None = None,
+        assistant_socket_path: Path | None = None,
     ):
         self._host = host
         self._port = port
@@ -51,9 +83,14 @@ class HTTPServer:
         self._token = bridge_token
         self._online = online
         self._health_state = health_state
+        self._ai_socket_path = ai_socket_path or Path(f"/run/user/{os.getuid()}/hestia-shell/ai.sock")
+        self._assistant_socket_path = assistant_socket_path or Path(
+            f"/run/user/{os.getuid()}/hestia-shell/assistant.sock"
+        )
         self._app = web.Application(middlewares=[self._auth_middleware])
         self._app.router.add_get("/health", self._health)
         self._app.router.add_get("/desktop_state", self._desktop_state)
+        self._app.router.add_get("/mobile_capabilities", self._mobile_capabilities)
         self._runner: web.AppRunner | None = None
 
     async def start(self) -> None:
@@ -105,6 +142,42 @@ class HTTPServer:
         snapshot = await self._build_snapshot()
         status = 200 if not snapshot.get("stale") else 503
         return web.json_response(snapshot, status=status)
+
+    async def _mobile_capabilities(self, request: web.Request) -> web.Response:
+        orchestrator = (
+            self._health_state.to_dict(include_private=False)
+            if self._health_state is not None
+            else {"status": "online" if self._online.is_set() else "offline"}
+        )
+        public_host = "127.0.0.1"
+        return web.json_response(
+            {
+                "interface": "hestia-mobile-agent-phone-interface",
+                "version": 1,
+                "transport": "local-only",
+                "description": "Constrained local phone UI surface for agents; backend services may be remote, but phone UI IPC remains on-device.",
+                "orchestrator_online": self._online.is_set(),
+                "orchestrator": orchestrator,
+                "sockets": {
+                    "ai": str(self._ai_socket_path),
+                    "assistant": str(self._assistant_socket_path),
+                },
+                "http": {
+                    "health": f"http://{public_host}:{self._port}/health",
+                    "desktop_state": f"http://{public_host}:{self._port}/desktop_state",
+                    "mobile_capabilities": f"http://{public_host}:{self._port}/mobile_capabilities",
+                },
+                "assistant_states": list(_ASSISTANT_STATES),
+                "visual_verbs": list(_VISUAL_VERBS),
+                "protected_modes": list(_PROTECTED_MODES),
+                "forbidden": list(_FORBIDDEN),
+                "event_protocol": {
+                    "assistant_socket": "newline-delimited JSON; subscribe with {\"type\":\"subscribe\"}; publish assistant.* or hestia_mobile.* frames",
+                    "ai_socket": "newline-delimited JSON chat requests; bridge returns token/tool_call/tool_result/done/error frames",
+                },
+                "ts": _now_iso(),
+            }
+        )
 
     # ------------------------------------------------------------------
     # Snapshot assembly

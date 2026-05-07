@@ -106,6 +106,31 @@ Requires `Authorization: Bearer <BRIDGE_TOKEN>` if configured. Aggregates:
 If every emerson call fails, `stale: true` is set and the response returns
 HTTP 503 so LSA can cleanly skip the assessment.
 
+### `GET /mobile_capabilities`
+
+Requires `Authorization: Bearer <BRIDGE_TOKEN>` if configured. Returns the
+sanitized, local-only phone interface contract an agent/orchestrator can use to
+discover supported Hestia Mobile visual verbs, assistant states, protected modes,
+and socket paths. It intentionally reports only phone-local IPC surfaces; do not
+expose `ai.sock` or `assistant.sock` over Tailscale.
+
+```json
+{
+  "interface": "hestia-mobile-agent-phone-interface",
+  "transport": "local-only",
+  "orchestrator_online": true,
+  "sockets": {
+    "ai": "/run/user/1000/hestia-shell/ai.sock",
+    "assistant": "/run/user/1000/hestia-shell/assistant.sock"
+  },
+  "visual_verbs": ["show_card", "update_card", "dismiss_card"],
+  "protected_modes": ["phone_call_active", "offline", "error"]
+}
+```
+
+The nested `orchestrator` object uses the same sanitized metadata policy as
+`/health`: no raw orchestrator URL, secrets, or upstream error details.
+
 ## Protocol translation (chat path)
 
 Inbound on `ai.sock` (per `hestia-OS/ai-integration-spec.md` §1):

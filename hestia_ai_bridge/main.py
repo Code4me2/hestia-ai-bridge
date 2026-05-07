@@ -120,6 +120,8 @@ async def _run(cfg: Config) -> None:
         bridge_token=cfg.bridge_token,
         online=online,
         health_state=health_state,
+        ai_socket_path=cfg.ai_socket_path,
+        assistant_socket_path=cfg.assistant_socket_path,
     )
 
     await uds.start()
