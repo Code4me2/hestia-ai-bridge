@@ -61,6 +61,7 @@ All via environment variables. Override in a systemd drop-in
 | `ORCH_HEALTH_INTERVAL`   | `30`                                   | Seconds between health probes (online)|
 | `ORCH_RETRY_INITIAL`     | `5`                                    | Offline backoff start (seconds)       |
 | `ORCH_RETRY_MAX`         | `300`                                  | Offline backoff cap (seconds)         |
+| `ORCH_FAILURE_THRESHOLD` | `3`                                    | Consecutive failed probes before marking orchestrator offline |
 | `EMERSON_POLL_TIMEOUT`   | `2.0`                                  | Per-IPC timeout to emerson            |
 | `LOG_LEVEL`              | `INFO`                                 | DEBUG / INFO / WARNING / ERROR        |
 
@@ -68,11 +69,19 @@ All via environment variables. Override in a systemd drop-in
 
 ### `GET /health`
 
-Always open. Returns orchestrator online/offline and bridge timestamp.
+Always open. Returns bridge status, orchestrator online/offline, timestamp,
+and sanitized orchestrator health metadata. It intentionally omits the
+orchestrator URL and raw upstream error details because `/health` bypasses
+`BRIDGE_TOKEN` for monitoring compatibility.
 
 ```json
 { "status": "ok", "orchestrator_online": true, "ts": "2026-04-20T..." }
 ```
+
+The nested `orchestrator.status` is `unknown` until the first async probe
+completes after bridge startup, `online` after a successful probe, `degraded`
+while transient failures are below `ORCH_FAILURE_THRESHOLD`, and `offline`
+after the threshold is reached.
 
 ### `GET /desktop_state`
 
@@ -96,6 +105,65 @@ Requires `Authorization: Bearer <BRIDGE_TOKEN>` if configured. Aggregates:
 
 If every emerson call fails, `stale: true` is set and the response returns
 HTTP 503 so LSA can cleanly skip the assessment.
+
+### `GET /mobile_capabilities`
+
+Requires `Authorization: Bearer <BRIDGE_TOKEN>` if configured. Returns the
+sanitized, local-only phone interface contract an agent/orchestrator can use to
+discover supported Hestia Mobile visual verbs, assistant states, protected modes,
+and socket paths. It intentionally reports only phone-local IPC surfaces; do not
+expose `ai.sock` or `assistant.sock` over Tailscale.
+
+```json
+{
+  "interface": "hestia-mobile-agent-phone-interface",
+  "transport": "local-only",
+  "orchestrator_online": true,
+  "sockets": {
+    "ai": "/run/user/1000/hestia-shell/ai.sock",
+    "assistant": "/run/user/1000/hestia-shell/assistant.sock"
+  },
+  "visual_verbs": ["show_card", "update_card", "dismiss_card"],
+  "protected_modes": ["phone_call_active", "offline", "error"],
+  "http": {
+    "mobile_capabilities": "http://127.0.0.1:8765/mobile_capabilities",
+    "mobile_state": "http://127.0.0.1:8765/mobile_state"
+  }
+}
+```
+
+The nested `orchestrator` object uses the same sanitized metadata policy as
+`/health`: no raw orchestrator URL, secrets, or upstream error details.
+
+### `GET /mobile_state`
+
+Requires `Authorization: Bearer <BRIDGE_TOKEN>` if configured. Returns the
+current phone-local runtime state an adapter should check before sending visual
+actions. It reports bridge-level online/offline protection, live phone-call
+protection from the shared `PhoneCallGuard`, socket existence, and conservative
+surface defaults; live shell state can be layered in later without changing the
+endpoint.
+
+```json
+{
+  "interface": "hestia-mobile-agent-phone-interface",
+  "version": 1,
+  "assistant_state": "idle",
+  "protected_mode": null,
+  "protected": false,
+  "call_active": false,
+  "online": true,
+  "chat_open": false,
+  "app_interface_open": false,
+  "visible_cards": [],
+  "safe_actions": ["show_card", "update_card", "dismiss_card"]
+}
+```
+
+When the bridge knows the phone surface is protected, optional material/actions
+are removed from `safe_actions`; close/dismiss actions remain safe. Offline/error
+state returns HTTP 503 with a sanitized JSON body so local adapters can still make
+a safe decision.
 
 ## Protocol translation (chat path)
 

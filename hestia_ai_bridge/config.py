@@ -17,6 +17,7 @@ def _xdg_state_home() -> Path:
 class Config:
     orchestrator_url: str
     ai_socket_path: Path
+    assistant_socket_path: Path
     http_host: str
     http_port: int
     emerson_socket: Path
@@ -25,6 +26,7 @@ class Config:
     orchestrator_health_interval: float
     orchestrator_retry_initial: float
     orchestrator_retry_max: float
+    orchestrator_failure_threshold: int
     emerson_poll_timeout: float
     log_level: str
 
@@ -41,6 +43,12 @@ def load() -> Config:
                 f"/run/user/{_uid()}/hestia-shell/ai.sock",
             )
         ),
+        assistant_socket_path=Path(
+            os.environ.get(
+                "ASSISTANT_SOCKET_PATH",
+                f"/run/user/{_uid()}/hestia-shell/assistant.sock",
+            )
+        ),
         http_host=os.environ.get("BRIDGE_HTTP_HOST", "127.0.0.1"),
         http_port=int(os.environ.get("BRIDGE_HTTP_PORT", "8765")),
         emerson_socket=Path(os.environ.get("EMERSON_SOCKET", "/tmp/emerson.sock")),
@@ -51,6 +59,7 @@ def load() -> Config:
         orchestrator_health_interval=float(os.environ.get("ORCH_HEALTH_INTERVAL", "30")),
         orchestrator_retry_initial=float(os.environ.get("ORCH_RETRY_INITIAL", "5")),
         orchestrator_retry_max=float(os.environ.get("ORCH_RETRY_MAX", "300")),
+        orchestrator_failure_threshold=max(1, int(os.environ.get("ORCH_FAILURE_THRESHOLD", "3"))),
         emerson_poll_timeout=float(os.environ.get("EMERSON_POLL_TIMEOUT", "2.0")),
         log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     )
