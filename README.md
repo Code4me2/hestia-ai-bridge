@@ -124,12 +124,45 @@ expose `ai.sock` or `assistant.sock` over Tailscale.
     "assistant": "/run/user/1000/hestia-shell/assistant.sock"
   },
   "visual_verbs": ["show_card", "update_card", "dismiss_card"],
-  "protected_modes": ["phone_call_active", "offline", "error"]
+  "protected_modes": ["phone_call_active", "offline", "error"],
+  "http": {
+    "mobile_capabilities": "http://127.0.0.1:8765/mobile_capabilities",
+    "mobile_state": "http://127.0.0.1:8765/mobile_state"
+  }
 }
 ```
 
 The nested `orchestrator` object uses the same sanitized metadata policy as
 `/health`: no raw orchestrator URL, secrets, or upstream error details.
+
+### `GET /mobile_state`
+
+Requires `Authorization: Bearer <BRIDGE_TOKEN>` if configured. Returns the
+current phone-local runtime state an adapter should check before sending visual
+actions. In the current offline-testable bridge slice this reports bridge-level
+online/offline protection, socket existence, and conservative surface defaults;
+live shell state can be layered in later without changing the endpoint.
+
+```json
+{
+  "interface": "hestia-mobile-agent-phone-interface",
+  "version": 1,
+  "assistant_state": "idle",
+  "protected_mode": null,
+  "protected": false,
+  "call_active": false,
+  "online": true,
+  "chat_open": false,
+  "app_interface_open": false,
+  "visible_cards": [],
+  "safe_actions": ["show_card", "update_card", "dismiss_card"]
+}
+```
+
+When the bridge knows the phone surface is protected, optional material/actions
+are removed from `safe_actions`; close/dismiss actions remain safe. Offline/error
+state returns HTTP 503 with a sanitized JSON body so local adapters can still make
+a safe decision.
 
 ## Protocol translation (chat path)
 

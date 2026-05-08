@@ -91,6 +91,7 @@ class HTTPServer:
         self._app.router.add_get("/health", self._health)
         self._app.router.add_get("/desktop_state", self._desktop_state)
         self._app.router.add_get("/mobile_capabilities", self._mobile_capabilities)
+        self._app.router.add_get("/mobile_state", self._mobile_state)
         self._runner: web.AppRunner | None = None
 
     async def start(self) -> None:
@@ -166,6 +167,7 @@ class HTTPServer:
                     "health": f"http://{public_host}:{self._port}/health",
                     "desktop_state": f"http://{public_host}:{self._port}/desktop_state",
                     "mobile_capabilities": f"http://{public_host}:{self._port}/mobile_capabilities",
+                    "mobile_state": f"http://{public_host}:{self._port}/mobile_state",
                 },
                 "assistant_states": list(_ASSISTANT_STATES),
                 "visual_verbs": list(_VISUAL_VERBS),
@@ -178,6 +180,43 @@ class HTTPServer:
                 "ts": _now_iso(),
             }
         )
+
+    async def _mobile_state(self, request: web.Request) -> web.Response:
+        online = self._online.is_set()
+        protected_mode = None if online else "offline"
+        assistant_state = "idle" if online else "offline"
+        public_host = "127.0.0.1"
+        payload = {
+            "interface": "hestia-mobile-agent-phone-interface",
+            "version": 1,
+            "assistant_state": assistant_state,
+            "protected_mode": protected_mode,
+            "protected": protected_mode is not None,
+            "call_active": protected_mode == "phone_call_active",
+            "online": online,
+            "chat_open": False,
+            "app_interface_open": False,
+            "visible_cards": [],
+            "current_tool_status": None,
+            "sockets": {
+                "assistant": {
+                    "configured": str(self._assistant_socket_path),
+                    "exists": self._assistant_socket_path.exists(),
+                },
+                "ai": {
+                    "configured": str(self._ai_socket_path),
+                    "exists": self._ai_socket_path.exists(),
+                },
+            },
+            "http": {
+                "health": f"http://{public_host}:{self._port}/health",
+                "mobile_capabilities": f"http://{public_host}:{self._port}/mobile_capabilities",
+                "mobile_state": f"http://{public_host}:{self._port}/mobile_state",
+            },
+            "safe_actions": _safe_actions_for(protected_mode),
+            "ts": _now_iso(),
+        }
+        return web.json_response(payload, status=200 if online else 503)
 
     # ------------------------------------------------------------------
     # Snapshot assembly
@@ -266,6 +305,12 @@ class HTTPServer:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _safe_actions_for(protected_mode: str | None) -> list[str]:
+    if protected_mode is None:
+        return list(_VISUAL_VERBS)
+    return ["dismiss_card", "close_chat", "close_app_interface"]
 
 
 def _ok(value):
