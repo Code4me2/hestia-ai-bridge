@@ -139,9 +139,10 @@ The nested `orchestrator` object uses the same sanitized metadata policy as
 
 Requires `Authorization: Bearer <BRIDGE_TOKEN>` if configured. Returns the
 current phone-local runtime state an adapter should check before sending visual
-actions. In the current offline-testable bridge slice this reports bridge-level
-online/offline protection, socket existence, and conservative surface defaults;
-live shell state can be layered in later without changing the endpoint.
+actions. It reports bridge-level online/offline protection, live phone-call
+protection from the shared `PhoneCallGuard`, socket existence, and conservative
+surface defaults; live shell state can be layered in later without changing the
+endpoint.
 
 ```json
 {

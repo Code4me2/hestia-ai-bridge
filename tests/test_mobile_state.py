@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from hestia_ai_bridge.assistant_events import PhoneCallGuard
 from hestia_ai_bridge.health import HealthState
 from hestia_ai_bridge.http_server import HTTPServer
 
@@ -9,7 +10,14 @@ from hestia_ai_bridge.http_server import HTTPServer
 _TEST_BRIDGE_CREDENTIAL = "unit-test-bearer"
 
 
-def _server(*, online: bool = True, assistant_exists: bool = True, ai_exists: bool = True, tmp_path: Path) -> HTTPServer:
+def _server(
+    *,
+    online: bool = True,
+    assistant_exists: bool = True,
+    ai_exists: bool = True,
+    call_active: bool = False,
+    tmp_path: Path,
+) -> HTTPServer:
     event = asyncio.Event()
     if online:
         event.set()
@@ -33,6 +41,7 @@ def _server(*, online: bool = True, assistant_exists: bool = True, ai_exists: bo
         health_state=health_state,
         ai_socket_path=ai_socket,
         assistant_socket_path=assistant_socket,
+        call_guard=PhoneCallGuard(call_active=call_active),
     )
 
 
@@ -69,3 +78,16 @@ def test_mobile_state_enters_offline_protected_mode_without_leaking_upstream(tmp
     assert payload["sockets"]["ai"]["exists"] is False
     assert "secret-orchestrator" not in body
     assert "sensitive" not in body
+
+
+def test_mobile_state_enters_phone_call_protected_mode_while_backend_online(tmp_path: Path):
+    response = asyncio.run(_server(call_active=True, tmp_path=tmp_path)._mobile_state(None))
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["assistant_state"] == "call_active"
+    assert payload["protected_mode"] == "phone_call_active"
+    assert payload["protected"] is True
+    assert payload["call_active"] is True
+    assert payload["online"] is True
+    assert payload["safe_actions"] == ["dismiss_card", "close_chat", "close_app_interface"]

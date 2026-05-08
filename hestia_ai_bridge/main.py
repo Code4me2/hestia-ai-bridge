@@ -122,6 +122,7 @@ async def _run(cfg: Config) -> None:
         health_state=health_state,
         ai_socket_path=cfg.ai_socket_path,
         assistant_socket_path=cfg.assistant_socket_path,
+        call_guard=call_guard,
     )
 
     await uds.start()

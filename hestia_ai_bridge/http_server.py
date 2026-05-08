@@ -27,6 +27,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from .assistant_events import PhoneCallGuard
 from .emerson_client import EmersonClient, EmersonError
 from .health import HealthState
 
@@ -76,6 +77,7 @@ class HTTPServer:
         health_state: HealthState | None = None,
         ai_socket_path: Path | None = None,
         assistant_socket_path: Path | None = None,
+        call_guard: PhoneCallGuard | None = None,
     ):
         self._host = host
         self._port = port
@@ -87,6 +89,7 @@ class HTTPServer:
         self._assistant_socket_path = assistant_socket_path or Path(
             f"/run/user/{os.getuid()}/hestia-shell/assistant.sock"
         )
+        self._call_guard = call_guard
         self._app = web.Application(middlewares=[self._auth_middleware])
         self._app.router.add_get("/health", self._health)
         self._app.router.add_get("/desktop_state", self._desktop_state)
@@ -183,8 +186,13 @@ class HTTPServer:
 
     async def _mobile_state(self, request: web.Request) -> web.Response:
         online = self._online.is_set()
-        protected_mode = None if online else "offline"
-        assistant_state = "idle" if online else "offline"
+        call_active = bool(self._call_guard and self._call_guard.call_active)
+        if call_active:
+            protected_mode = "phone_call_active"
+            assistant_state = "call_active"
+        else:
+            protected_mode = None if online else "offline"
+            assistant_state = "idle" if online else "offline"
         public_host = "127.0.0.1"
         payload = {
             "interface": "hestia-mobile-agent-phone-interface",
@@ -192,7 +200,7 @@ class HTTPServer:
             "assistant_state": assistant_state,
             "protected_mode": protected_mode,
             "protected": protected_mode is not None,
-            "call_active": protected_mode == "phone_call_active",
+            "call_active": call_active,
             "online": online,
             "chat_open": False,
             "app_interface_open": False,
